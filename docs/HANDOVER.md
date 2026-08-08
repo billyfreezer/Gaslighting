@@ -1,7 +1,7 @@
 # Actually. handover
 
-Date: **8 August 2026**  
-Current version: **0.1.0 prototype**
+Date: **9 August 2026**
+Current version: **0.1.1 mobile upload hotfix**
 
 ## Current state
 
@@ -9,6 +9,18 @@ The complete one-route prototype has been implemented. It includes real browser
 recording, local recoverable chunks, the objection workflow, OpenAI-backed
 speaker diarisation and verdict routes, manual voice-to-name mapping, appeals,
 sharing, an Evidence Locker and a fully usable demo case.
+
+The first real Pixel 5 attempt recorded for 18 minutes and retained 2,152,329
+bytes locally, but the original single multipart request was rejected by Sites
+with HTTP 413 before reaching OpenAI. The app then tried to parse the host’s
+plain-text rejection as JSON. No transcription charge was incurred and the
+recording remained in IndexedDB because the user kept the page/site data open.
+
+Version 0.1.1 fixes that platform boundary. The complete Blob is sent as 768 KiB
+transport parcels, held briefly in private R2, reconstructed byte for byte, then
+submitted once for speaker diarisation. Temporary remote parcels are deleted
+after the attempt; the device copy is deleted only after a successful
+transcript. The UI now shows progress and preserves a clear retry path.
 
 The hosted runtime has `OPENAI_API_KEY` configured as a protected secret and is
 deployed owner-only at
@@ -35,10 +47,12 @@ the public repository and deployed architecture documents do not drift.
 
 ## Next agreed action
 
-1. Test on Ben’s Pixel 5 with Ben and Emily speaking.
-2. Record the results against the manual acceptance steps below.
-3. Decide whether the v0.2 reliability pass needs a native Android wrapper only
-   after the foreground PWA test.
+1. Deploy v0.1.1 with the new `BUCKET` R2 binding.
+2. On Ben’s still-open Pixel 5 page, refresh once after deployment.
+3. Use **Open the case** under **Unfinished business** to recover and submit the
+   retained 18-minute recording.
+4. Confirm the upload reaches 100%, speaker quotations appear and the accurate
+   transcript covers the expected conversation.
 
 ## First test script
 
@@ -55,8 +69,12 @@ the public repository and deployed architecture documents do not drift.
 ## Known limitations
 
 - A PWA cannot promise continuous recording after screen lock or OS termination.
-- The prototype submits the complete recording; an hour-long real test is still
-  needed to validate request duration and diarised transcript completeness.
+- The prototype submits the complete recording through temporary parcels; an
+  hour-long test is still needed to validate end-to-end duration and diarised
+  transcript completeness.
+- Interrupted temporary uploads are deleted best-effort by the browser and
+  stale objects are purged when the next session starts; the prototype has no
+  scheduled cleanup worker.
 - The public launch controls in `ARCHITECTURE.md` are not yet implemented.
 - There is no automated route test suite yet.
 - Automated visual preview was unavailable in the cloud-browser environment for

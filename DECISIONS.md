@@ -12,7 +12,7 @@ accepted decision; mark it superseded and link to the replacement.
 
 ## D002 — Record locally and transcribe only used cases
 
-**Status:** accepted  
+**Status:** accepted
 **Decision:** no streaming transcription in the prototype. Starting or
 discarding a recording costs nothing and sends nothing remotely.
 
@@ -78,3 +78,21 @@ a contradictory reconstruction. It never retranscribes the audio.
 `billyfreezer/Gaslighting`. Hosted runtime values, including
 `OPENAI_API_KEY`, never enter Git or browser code. The deployed app remains
 owner-only until the public-launch controls in `ARCHITECTURE.md` are complete.
+
+## D012 — Parcel the complete recording through temporary object storage
+
+**Status:** accepted
+**Date:** 9 August 2026
+
+**Context:** the first 18-minute Pixel 5 recording produced a 2,152,329-byte
+WebM file. Sites rejected the single multipart request with HTTP 413 before it
+reached the app route, despite the audio being far below OpenAI’s 25 MB limit.
+
+**Decision:** preserve D004’s full-recording requirement, but split the original
+Blob into 768 KiB transport parcels. Store those parcels temporarily in the
+Site’s private R2 binding, reconstruct and size-check the original byte stream,
+then make one speaker-diarisation request. Delete temporary objects after every
+processing attempt. Keep the IndexedDB copy until transcription succeeds.
+
+This is not audio trimming and does not transcribe fragments independently;
+speaker context and the original media container remain intact.

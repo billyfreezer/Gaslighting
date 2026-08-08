@@ -8,6 +8,7 @@ import {
   saveEvidenceChunk,
 } from "../lib/evidence-store";
 import { DEMO_SEGMENTS, makeDemoVerdict } from "../lib/demo";
+import { splitAudioBlob } from "../lib/upload-protocol";
 import type {
   ActuallyVerdict,
   AppPhase,
@@ -21,6 +22,42 @@ const CLOSING_ARGUMENT_SECONDS = 90;
 type WakeLockSentinelLike = {
   release: () => Promise<void>;
 };
+
+type UploadProgress = {
+  stage: "uploading" | "transcribing";
+  completedParts: number;
+  totalParts: number;
+};
+
+async function readApiJson<T>(response: Response): Promise<T> {
+  const raw = await response.text();
+  let data: { error?: string } & Partial<T> = {};
+
+  if (raw) {
+    try {
+      data = JSON.parse(raw) as { error?: string } & Partial<T>;
+    } catch {
+      if (response.status === 413 || /payload too large/i.test(raw)) {
+        throw new Error(
+          "One evidence parcel was rejected as too large. The full recording is still safe on this phone.",
+        );
+      }
+      throw new Error(
+        response.ok
+          ? "The court returned an unreadable note."
+          : `The evidence desk returned ${response.status}: ${raw.slice(0, 140)}`,
+      );
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data.error || `The evidence desk returned an unhelpful ${response.status}.`,
+    );
+  }
+
+  return data as T;
+}
 
 function formatClock(seconds: number) {
   const safe = Math.max(0, Math.floor(seconds));
@@ -80,6 +117,9 @@ export default function ActuallyApp() {
   const [recoverable, setRecoverable] = useState(false);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [isDemo, setIsDemo] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(
+    null,
+  );
 
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -95,6 +135,7 @@ export default function ActuallyApp() {
   const audioBlobRef = useRef<Blob | null>(null);
   const wakeLockRef = useRef<WakeLockSentinelLike | null>(null);
   const finishInProgressRef = useRef(false);
+  const uploadSessionRef = useRef("");
 
   const speakers = useMemo(() => uniqueSpeakers(segments), [segments]);
 
@@ -150,19 +191,79 @@ export default function ActuallyApp() {
     audioBlobRef.current = audio;
     setPhase("transcribing");
     setErrorMessage("");
+    setUploadProgress(null);
+
+    let sessionId = "";
 
     try {
-      const body = new FormData();
-      body.append("audio", audio, "actually-evidence.webm");
+      const parts = splitAudioBlob(audio);
+      setUploadProgress({
+        stage: "uploading",
+        completedParts: 0,
+        totalParts: parts.length,
+      });
+
+      const sessionResponse = await fetch("/api/transcribe/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mimeType: audio.type || "audio/webm",
+          totalBytes: audio.size,
+          partCount: parts.length,
+        }),
+      });
+      const session = await readApiJson<{ sessionId: string }>(sessionResponse);
+      if (!session.sessionId) {
+        throw new Error("The evidence desk failed to issue an upload ticket.");
+      }
+      sessionId = session.sessionId;
+      uploadSessionRef.current = sessionId;
+
+      let nextPart = 0;
+      let completedParts = 0;
+      const uploadWorker = async () => {
+        while (nextPart < parts.length) {
+          const partIndex = nextPart;
+          nextPart += 1;
+          const partResponse = await fetch("/api/transcribe/part", {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "x-actually-upload-id": sessionId,
+              "x-actually-part-index": String(partIndex),
+            },
+            body: parts[partIndex],
+          });
+          await readApiJson<{ received: boolean }>(partResponse);
+          completedParts += 1;
+          setUploadProgress({
+            stage: "uploading",
+            completedParts,
+            totalParts: parts.length,
+          });
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(3, parts.length) }, () => uploadWorker()),
+      );
+
+      setUploadProgress({
+        stage: "transcribing",
+        completedParts: parts.length,
+        totalParts: parts.length,
+      });
       const response = await fetch("/api/transcribe", {
         method: "POST",
-        body,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
       });
-      const result = (await response.json()) as {
+      const result = await readApiJson<{
         segments?: TranscriptSegment[];
         error?: string;
         code?: string;
-      };
+      }>(response);
+      uploadSessionRef.current = "";
 
       if (!response.ok || !result.segments?.length) {
         throw new Error(
@@ -181,8 +282,18 @@ export default function ActuallyApp() {
       pendingSavesRef.current = [];
       await clearEvidence();
       setRecoverable(false);
+      setUploadProgress(null);
       setPhase("identity");
     } catch (error) {
+      if (sessionId) {
+        await fetch("/api/transcribe/session", {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId }),
+        }).catch(() => undefined);
+      }
+      uploadSessionRef.current = "";
+      setUploadProgress(null);
       setErrorMessage(
         error instanceof Error
           ? error.message
@@ -258,6 +369,7 @@ export default function ActuallyApp() {
       setTopic("");
       setIsDemo(false);
       setErrorMessage("");
+      setUploadProgress(null);
 
       recorder.addEventListener("dataavailable", (event) => {
         if (!event.data.size) return;
@@ -353,6 +465,7 @@ export default function ActuallyApp() {
     setNames({});
     setVerdict(null);
     setErrorMessage("");
+    setUploadProgress(null);
     setPhase("idle");
   }, [clearTimers, releaseHardware, stopCapture]);
 
@@ -478,6 +591,22 @@ export default function ActuallyApp() {
     window.addEventListener("beforeunload", warnBeforeLeaving);
     return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
   }, [phase]);
+
+  useEffect(() => {
+    const abandonTemporaryUpload = () => {
+      const sessionId = uploadSessionRef.current;
+      if (!sessionId) return;
+      void fetch("/api/transcribe/session", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+        keepalive: true,
+      });
+      uploadSessionRef.current = "";
+    };
+    window.addEventListener("pagehide", abandonTemporaryUpload);
+    return () => window.removeEventListener("pagehide", abandonTemporaryUpload);
+  }, []);
 
   const retryFromError = () => {
     if (audioBlobRef.current) {
@@ -694,13 +823,34 @@ export default function ActuallyApp() {
 
         {phase === "transcribing" && (
           <LoadingCourt
-            label="ENTERING THE EVIDENCE"
-            title="Identifying who said what…"
-            notes={[
-              "Separating speakers",
-              "Locating devastatingly mundane context",
-              "Deleting raw audio after transcription",
-            ]}
+            label={
+              uploadProgress?.stage === "uploading"
+                ? "ENTERING THE EVIDENCE IN SAFE PARCELS"
+                : "EVIDENCE RECEIVED"
+            }
+            title={
+              uploadProgress?.stage === "uploading"
+                ? "Uploading the complete recording…"
+                : "Identifying who said what…"
+            }
+            progress={
+              uploadProgress?.stage === "uploading" && uploadProgress.totalParts
+                ? (uploadProgress.completedParts / uploadProgress.totalParts) * 100
+                : undefined
+            }
+            notes={
+              uploadProgress?.stage === "uploading"
+                ? [
+                    `${uploadProgress.completedParts} of ${uploadProgress.totalParts} parcels safely received`,
+                    "Keeping the recoverable original on this phone",
+                    "Reassembling every inadvisable remark in order",
+                  ]
+                : [
+                    "Separating speakers",
+                    "Locating devastatingly mundane context",
+                    "Deleting raw audio after transcription",
+                  ]
+            }
           />
         )}
 
@@ -943,10 +1093,12 @@ function LoadingCourt({
   label,
   title,
   notes,
+  progress,
 }: {
   label: string;
   title: string;
   notes: string[];
+  progress?: number;
 }) {
   return (
     <section className="loading-court">
@@ -956,6 +1108,19 @@ function LoadingCourt({
       </div>
       <p className="eyebrow">{label}</p>
       <h1>{title}</h1>
+      {typeof progress === "number" && (
+        <div
+          className="upload-progress"
+          role="progressbar"
+          aria-label="Evidence upload progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(progress)}
+        >
+          <span style={{ width: `${Math.max(2, progress)}%` }} />
+          <b>{Math.round(progress)}%</b>
+        </div>
+      )}
       <div className="loading-notes">
         {notes.map((note, index) => (
           <span key={note} style={{ animationDelay: `${index * 0.55}s` }}>
@@ -987,4 +1152,3 @@ function Transcript({
     </div>
   );
 }
-

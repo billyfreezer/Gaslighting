@@ -17,14 +17,25 @@
 - [x] Smoke-test two-speaker transcription, structured verdict and appeal
 - [ ] Test on Ben’s Pixel 5 with two speakers
 
+## v0.1.1 — Mobile upload hotfix
+
+- [x] Reproduce the 18-minute, 2,152,329-byte HTTP 413 failure
+- [x] Add lossless 768 KiB parcel uploads beneath the Sites ingress limit
+- [x] Reconstruct the complete recording before speaker diarisation
+- [x] Delete temporary server-side parcels after success or failure
+- [x] Preserve device-local evidence across failed attempts and page reloads
+- [x] Replace plain-text/JSON parser failures with a useful message
+- [x] Add upload progress and regression tests using the exact failed size
+- [ ] Recover and transcribe Ben’s retained 18-minute recording on Pixel 5
+
 ## v0.2 — Real-life reliability pass
 
-- [ ] Add mocked route tests and IndexedDB unit tests
+- [ ] Add IndexedDB unit tests
 - [ ] Measure file size after 10, 30 and 60 minutes on Android
 - [ ] Test recovery after tab closure, browser backgrounding and incoming call
 - [ ] Validate diarisation with overlapping speech and a television in the room
 - [ ] Add optional pre-upload audio trimming only if testing proves valuable
-- [ ] Add a clear upload progress indicator for slower connections
+- [x] Add a clear upload progress indicator for slower connections
 - [ ] Create a shareable rendered verdict image rather than text alone
 - [ ] Add a case-specific “relevance window” around the objection in the prompt
 

@@ -12,6 +12,9 @@ The current owner-only prototype is deployed at
 
 The prototype’s important promise is literal: ordinary recording does not call
 an API. Audio stays on the device until the user deliberately opens a case.
+When a case is opened, the complete recording travels in small safe parcels,
+is reconstructed before transcription and is removed from temporary server
+storage after the attempt.
 
 ## Read this before changing the product
 

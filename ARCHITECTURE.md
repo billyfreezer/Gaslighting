@@ -1,7 +1,7 @@
 # Architecture
 
-Status: **prototype architecture v0.1**  
-Last updated: **8 August 2026**
+Status: **prototype architecture v0.1.1**
+Last updated: **9 August 2026**
 
 This document exists to prevent implementation drift. Any later change to the
 privacy boundary, recording lifecycle, speaker resolution or satire boundary
@@ -21,6 +21,11 @@ must be recorded in `DECISIONS.md` before it is implemented.
 9. No cloud database or long-term conversation history in the prototype.
 10. Appeals reuse the transcript and therefore do not pay for transcription
     again.
+11. The full recording is divided only for transport, reconstructed byte for
+    byte before transcription, and never semantically trimmed without a new
+    product decision.
+12. Temporary server-side audio parcels are deleted after every transcription
+    attempt; the recoverable device copy remains until transcription succeeds.
 
 ## System shape
 
@@ -29,11 +34,12 @@ flowchart TD
     A[Mobile browser microphone] --> B[MediaRecorder]
     B --> C[5-second IndexedDB chunks]
     C -->|Destroy| D[Permanent local deletion]
-    C -->|Open case| E[Server transcription route]
-    E --> F[Speaker-labelled transcript]
-    F --> G[Human name mapping]
-    G --> H[Server verdict route]
-    H --> I[Structured satirical verdict]
+    C -->|Open case| E[Safe upload parcels]
+    E --> F[Temporary R2 locker]
+    F --> G[Byte-perfect reconstruction]
+    G --> H[Speaker-labelled transcript]
+    H --> I[Human name mapping]
+    I --> J[Structured satirical verdict]
 ```
 
 There are three trust zones:
@@ -41,7 +47,8 @@ There are three trust zones:
 | Zone | Contains | Persistence |
 |---|---|---|
 | Device | Raw audio chunks, transient transcript and verdict | Audio until discard or successful transcription; other state only for the page session |
-| Actually. server | API key and two narrow proxy routes | None |
+| Actually. server | API key and narrow upload, transcription and verdict routes | None |
+| Temporary R2 locker | Bounded encrypted-at-rest audio parcels after explicit case opening | Deleted after the transcription attempt; interrupted parcels are deleted by the client where possible and stale parcels are purged on later uploads |
 | OpenAI API | Submitted audio for transcription and transcript for verdict | Requests use the relevant API; verdict requests set `store: false` |
 
 ## State machine
@@ -52,7 +59,7 @@ There are three trust zones:
 | `listening` | Microphone begins, local chunks start | Objection, destroy, 60-minute hold |
 | `objected` | Objection timestamp recorded | Auto-judge, judge now, extend 60 seconds |
 | `held` | One-hour cap reached without objection | Explicitly open case or destroy |
-| `transcribing` | Audio submitted | Identity parade or retryable error |
+| `transcribing` | Audio split into safe transport parcels | Reassembly, transcription, identity parade or retryable error |
 | `identity` | Anonymous segments returned | Issue verdict |
 | `judging` | Transcript and names submitted | Verdict or retryable error |
 | `verdict` | Structured verdict returned | Appeal, share, Evidence Locker, burn case |
@@ -77,11 +84,29 @@ the screen is locked or the browser is killed. Wake Lock improves the foreground
 case but does not make a PWA equivalent to a native background recorder. A
 native wrapper is a later decision, not a hidden prototype assumption.
 
-## Transcription boundary
+## Upload and transcription boundary
+
+The Sites ingress limit is lower than OpenAI’s 25 MB transcription limit. A
+single 2.15 MB mobile upload was rejected with HTTP 413 during the first Pixel 5
+test. The app therefore uses a bounded temporary upload protocol:
+
+1. `POST /api/transcribe/session` creates an opaque upload ticket.
+2. The browser slices the original Blob into 768 KiB byte ranges and sends each
+   range to `PUT /api/transcribe/part` with up to three concurrent requests.
+3. `POST /api/transcribe` reassembles those ranges in order and verifies the
+   exact total byte count before contacting OpenAI.
+4. The temporary R2 objects are deleted in a `finally` path whether OpenAI
+   succeeds or fails. Local IndexedDB evidence is deleted only on success.
+
+The split is a transport operation, not an audio edit. Arbitrary WebM byte
+ranges are never transcribed separately, so the media header, chronology and
+speaker context remain intact.
 
 `POST /api/transcribe`
 
-- Accepts one audio `File` under 25 MB.
+- Accepts only a small JSON upload ticket after all parcels arrive.
+- Reconstructs one audio `Blob` under 25 MB and checks it matches the declared
+  byte count.
 - Reads `OPENAI_API_KEY` only on the server.
 - Calls `/v1/audio/transcriptions` with:
   - model `gpt-4o-transcribe-diarize`
@@ -90,8 +115,9 @@ native wrapper is a later decision, not a hidden prototype assumption.
 - Returns only normalised `{ speaker, text, start, end }` segments.
 - Does not attempt to guess real names.
 
-The browser deletes raw chunks after a successful response. If the request
-fails, it keeps the audio so the user can retry or destroy it.
+The browser shows parcel upload progress. It safely handles non-JSON hosting
+errors instead of surfacing a JSON parser message. If any step fails, the full
+device-local audio remains available for retry or deliberate destruction.
 
 ## Identity resolution
 
@@ -161,8 +187,10 @@ commit it to GitHub.
 Automated:
 
 - Production build and rendered-HTML checks
+- Lossless split/reassembly test using the exact 2,152,329-byte failed payload
+- Full upload-route test with an in-memory R2 double, mocked OpenAI response and
+  an assertion that temporary objects are deleted
 - TypeScript compilation through the build
-- Route validation with mocked upstream calls (next addition)
 - State/store unit tests (next addition)
 
 Manual mobile acceptance:

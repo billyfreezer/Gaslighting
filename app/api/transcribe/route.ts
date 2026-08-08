@@ -1,6 +1,10 @@
 import type { TranscriptSegment } from "../../../lib/types";
-
-const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+import {
+  assembleUpload,
+  deleteUploadSession,
+  UploadProtocolError,
+  uploadErrorResponse,
+} from "../../../lib/transcription-upload.server";
 
 function fileNameFor(type: string) {
   if (type.includes("mp4")) return "actually-evidence.m4a";
@@ -10,40 +14,23 @@ function fileNameFor(type: string) {
 }
 
 export async function POST(request: Request) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return Response.json(
-      {
-        code: "API_NOT_CONFIGURED",
-        error: "The court stenographer has not been connected yet.",
-      },
-      { status: 503 },
-    );
-  }
+  let sessionId = "";
 
   try {
-    const incoming = await request.formData();
-    const audio = incoming.get("audio");
-
-    if (!(audio instanceof File) || audio.size === 0) {
-      return Response.json(
-        { error: "No usable audio evidence was supplied." },
-        { status: 400 },
+    const body = (await request.json()) as { sessionId?: string };
+    sessionId = String(body.sessionId || "");
+    if (!process.env.OPENAI_API_KEY) {
+      throw new UploadProtocolError(
+        "The court stenographer has not been connected yet.",
+        503,
+        "API_NOT_CONFIGURED",
       );
     }
 
-    if (audio.size > MAX_AUDIO_BYTES) {
-      return Response.json(
-        {
-          error:
-            "This recording is over the 25 MB evidence limit. Shorter proceedings are required.",
-        },
-        { status: 413 },
-      );
-    }
+    const { audio, manifest } = await assembleUpload(sessionId);
 
     const evidence = new FormData();
-    evidence.append("file", audio, fileNameFor(audio.type));
+    evidence.append("file", audio, fileNameFor(manifest.mimeType));
     evidence.append("model", "gpt-4o-transcribe-diarize");
     evidence.append("response_format", "diarized_json");
     evidence.append("chunking_strategy", "auto");
@@ -52,7 +39,7 @@ export async function POST(request: Request) {
       "https://api.openai.com/v1/audio/transcriptions",
       {
         method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
         body: evidence,
       },
     );
@@ -103,11 +90,18 @@ export async function POST(request: Request) {
       text: result.text || segments.map((segment) => segment.text).join(" "),
       segments,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof UploadProtocolError) return uploadErrorResponse(error);
     return Response.json(
-      { error: "Actually. dropped the tape while looking authoritative." },
+      {
+        error: "Actually. dropped the tape while looking authoritative.",
+        code: "TRANSCRIPTION_ERROR",
+      },
       { status: 500 },
     );
+  } finally {
+    if (sessionId) {
+      await deleteUploadSession(sessionId).catch(() => undefined);
+    }
   }
 }
-
