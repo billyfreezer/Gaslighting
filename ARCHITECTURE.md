@@ -140,8 +140,9 @@ docs/
 
 ## Security and deployment
 
-The first deployment should remain owner-only while it uses a single personal
-API key. A public rollout requires, at minimum:
+The source repository is intentionally public, while the deployed app remains
+owner-only because it uses a single personal API key. A public app rollout
+requires, at minimum:
 
 - user authentication;
 - per-user and per-IP rate limits;
@@ -175,4 +176,3 @@ Manual mobile acceptance:
 7. Generate and appeal a ruling without a second transcription request.
 8. Share a verdict using the Android share sheet.
 9. Interrupt a recording by closing the tab and test recovery.
-

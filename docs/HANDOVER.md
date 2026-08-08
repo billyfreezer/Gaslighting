@@ -26,14 +26,19 @@ The production routes passed a genuine API smoke test on 8 August 2026:
 
 The source repository is intentionally public at
 <https://github.com/billyfreezer/Gaslighting>. The API key and hosted runtime
-values must never be committed there.
+values must never be committed there. The complete audited source has been
+published to `main`.
+
+The hosted Site and the public GitHub repository use separate source remotes.
+After future checkpoints, mirror the same reviewed source state to GitHub so
+the public repository and deployed architecture documents do not drift.
 
 ## Next agreed action
 
-1. Publish this existing codebase to the user-owned GitHub repository; do not
-   regenerate the app from a prompt.
-2. Test on Ben’s Pixel 5 with Ben and Emily speaking.
-3. Record the results against the manual acceptance steps below.
+1. Test on Ben’s Pixel 5 with Ben and Emily speaking.
+2. Record the results against the manual acceptance steps below.
+3. Decide whether the v0.2 reliability pass needs a native Android wrapper only
+   after the foreground PWA test.
 
 ## First test script
 

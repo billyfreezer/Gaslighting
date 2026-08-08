@@ -5,7 +5,8 @@ accepted decision; mark it superseded and link to the replacement.
 
 ## D001 — Name the product “Actually.”
 
-**Status:** accepted  
+**Status:** accepted
+
 **Reason:** short, relationship-coded and ideal for interface language such as
 “Actually. has reconsidered the evidence.”
 
@@ -69,3 +70,11 @@ material blocker.
 **Decision:** an appeal sends the existing transcript plus previous verdict for
 a contradictory reconstruction. It never retranscribes the audio.
 
+## D011 — Keep source public and the API-backed app owner-only
+
+**Status:** accepted
+
+**Decision:** the prototype source is published at
+`billyfreezer/Gaslighting`. Hosted runtime values, including
+`OPENAI_API_KEY`, never enter Git or browser code. The deployed app remains
+owner-only until the public-launch controls in `ARCHITECTURE.md` are complete.

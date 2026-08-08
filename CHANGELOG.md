@@ -13,3 +13,5 @@
 - Connected the owner-only deployment to a protected runtime API key.
 - Verified real two-speaker diarisation, a schema-valid verdict and a
   contradictory appeal without retranscribing the audio.
+- Published the audited prototype source to the intentionally public
+  `billyfreezer/Gaslighting` repository with no runtime secret.
